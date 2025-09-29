@@ -1,0 +1,246 @@
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local KEY = rawget(_G, "script_key") or getgenv().script_key or script_key
+local FIREBASE_KEY_URL = "https://codenova-f5457-default-rtdb.firebaseio.com/mobile.json"
+local FIREBASE_JOB_URL = "https://codenova-f5457-default-rtdb.firebaseio.com/ccc.json"
+
+local function prints(str)
+    print("[KeySystem]: " .. str)
+end
+
+if not KEY or KEY == "" then
+    prints("❌ Defina a variável script_key antes de executar o script!")
+    return
+end
+
+local function parseKeyData(data)
+    for k, v in pairs(data) do
+        if k == KEY then
+            local parts = {}
+            for part in string.gmatch(v, "([^,]+)") do
+                table.insert(parts, part)
+            end
+            local expires = parts[1]
+            table.remove(parts, 1)
+            local nicks = parts
+            return expires, nicks
+        end
+    end
+    return nil, nil
+end
+
+local function isExpired(isoDate)
+    local pattern = "(%d+)%-(%d+)%-(%d+)T(%d+):(%d+):([%d%.]+)Z"
+    local y, m, d, h, min, s = isoDate:match(pattern)
+    if not y then return true end
+    local now = os.time(os.date("!*t"))
+    local exp = os.time({
+        year = tonumber(y),
+        month = tonumber(m),
+        day = tonumber(d),
+        hour = tonumber(h),
+        min = tonumber(min),
+        sec = math.floor(tonumber(s)),
+    })
+    return now > exp
+end
+
+local function checkKey()
+    local success, response = pcall(function()
+        return game:HttpGet(FIREBASE_KEY_URL)
+    end)
+    if not success or not response then
+        prints("❌ Erro ao acessar o banco de dados de keys.")
+        return false
+    end
+
+    local successDecode, data = pcall(function()
+        return HttpService:JSONDecode(response)
+    end)
+    if not successDecode or not data then
+        prints("❌ Erro ao decodificar dados de keys.")
+        return false
+    end
+
+    local expires, nicks = parseKeyData(data)
+    if not expires then
+        prints("❌ Key inválida ou não encontrada.")
+        return false
+    end
+
+    if isExpired(expires) then
+        prints("❌ Key expirada! Validade: " .. expires)
+        return false
+    end
+
+    local found = false
+    for _, nick in ipairs(nicks) do
+        if nick:lower() == LocalPlayer.Name:lower() then
+            found = true
+            break
+        end
+    end
+
+    if found then
+        prints("✅ Key válida e nick autorizado!")
+        return true
+    else
+        prints("⚠️ Key válida, mas seu nick NÃO está autorizado!")
+        return false
+    end
+end
+
+local function readJobID()
+    local success, response = pcall(function()
+        return game:HttpGet(FIREBASE_JOB_URL)
+    end)
+
+    if not success or not response then
+        prints("❌ Erro ao buscar JobID do site.")
+        return nil
+    end
+
+    local successDecode, data = pcall(function()
+        return HttpService:JSONDecode(response)
+    end)
+
+    if not successDecode or not data then
+        prints("❌ Erro ao decodificar dados do JobID.")
+        return nil
+    end
+
+    if typeof(data) == "string" and data ~= "" then
+        local jobID = data:gsub("%s+", "")
+        prints("🔎 JobID encontrado!")
+        return jobID
+    end
+
+    if typeof(data) == "table" and data.job_id and data.job_id ~= "" then
+        local jobID = data.job_id:gsub("%s+", "")
+        prints("🔎 JobID encontrado!")
+        return jobID
+    end
+
+    prints("❌ JobID não encontrado no site.")
+    return nil
+end
+
+local function setJobIdInput(jobId)
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            for _, descendant in ipairs(gui:GetDescendants()) do
+                if descendant:IsA("TextBox") then
+                    local path = ""
+                    pcall(function() path = descendant:GetFullName() end)
+                    
+                    if descendant.Name == "InputBox" and path:find("Job%-ID ?Input%.InputFrame%.InputBox") then
+                        pcall(function()
+                            descendant:CaptureFocus()
+                            descendant.Text = jobId
+                            descendant:ReleaseFocus()
+                        end)
+                        return true
+                    end
+
+                    if descendant.Name == "Input" and path:find("Job%-ID ?Input") then
+                        pcall(function()
+                            descendant:CaptureFocus()
+                            descendant.Text = jobId
+                            descendant:ReleaseFocus()
+                        end)
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    prints("❌ Campo de input do Job ID não encontrado com nenhum caminho conhecido.")
+    return false
+end
+
+local function clicarBotaoJoin()
+    for _, obj in ipairs(game:GetService("CoreGui"):GetDescendants()) do
+        if obj:IsA("Frame") and obj.Name == "Join Job-ID" then
+            for _, child in ipairs(obj:GetDescendants()) do
+                if child:IsA("TextButton") or child:IsA("ImageButton") then
+                    if getconnections then
+                        for _, conn in ipairs(getconnections(child.MouseButton1Click)) do
+                            conn:Fire()
+                        end
+                    end
+                    return true
+                end
+            end
+        end
+        
+        if (obj:IsA("TextButton") or obj:IsA("ImageButton")) and obj.Name == "Join Job-ID" then
+            if getconnections then
+                for _, conn in ipairs(getconnections(obj.MouseButton1Click)) do
+                    conn:Fire()
+                end
+            end
+            return true
+        end
+    end
+    prints("❌ Botão 'Join' não encontrado com nenhum caminho conhecido.")
+    return false
+end
+
+-- Execução principal
+-- NOVAS VARIÁVEIS DE CONTROLE
+local pendingJobIDs = {}
+local sequenceActive = false
+local currentSequenceJobID = nil
+local lastSeenJobID = nil
+
+local function startSequence(jobID)
+    sequenceActive = true
+    currentSequenceJobID = jobID
+    task.spawn(function()
+        for i = 1, 3 do
+            prints(("Tentativa (%d/3) para JobID: %s"):format(i, jobID))
+            setJobIdInput(jobID)
+            task.wait(0.005)
+            clicarBotaoJoin()
+            if i < 3 then
+                task.wait(2) -- espera 2s entre as tentativas
+            end
+        end
+        sequenceActive = false
+        currentSequenceJobID = nil
+        if #pendingJobIDs > 0 then
+            local nextId = table.remove(pendingJobIDs, 1)
+            startSequence(nextId)
+        end
+    end)
+end
+
+task.spawn(function()
+    if not checkKey() then
+        prints("❌ A chave é inválida ou não autorizada. Encerrando o script.")
+        return
+    end
+
+    prints("✅ Chave validada com sucesso! Iniciando monitoramento de Job IDs...")
+
+    while true do
+        local jobID = readJobID()
+        if jobID then
+            if jobID ~= lastSeenJobID then
+                prints("🔁 Novo JobID detectado: " .. tostring(jobID))
+                lastSeenJobID = jobID
+                if sequenceActive then
+                    prints("⏳ Sequência em andamento. Novo JobID adicionado à fila.")
+                    table.insert(pendingJobIDs, jobID)
+                else
+                    startSequence(jobID)
+                end
+            else
+                -- Mesmo JobID já processado ou em processamento: não faz nada
+            end
+        end
+        task.wait(0.5) -- Checagem a cada 0.5s conforme solicitado
+    end
+end)
