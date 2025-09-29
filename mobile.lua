@@ -139,28 +139,15 @@ local function setJobIdInput(jobId)
                     local path = ""
                     pcall(function() path = descendant:GetFullName() end)
                     
-                    local isMatch = (descendant.Name == "InputBox" and path:find("Job%-ID ?Input%.InputFrame%.InputBox")) or
-                                  (descendant.Name == "Input" and path:find("Job%-ID ?Input"))
+                    -- Caminho 1 (Mobile): Job-ID Input.InputFrame.InputBox
+                    if descendant.Name == "InputBox" and path:find("Job%-ID ?Input%.InputFrame%.InputBox") then
+                        pcall(function() descendant.Text = jobId end)
+                        return true
+                    end
 
-                    if isMatch then
-                        pcall(function()
-                            -- 1. Simula um clique na caixa de texto para obter o foco.
-                            descendant:CaptureFocus()
-                            task.wait()
-
-                            -- 2. Define o texto.
-                            descendant.Text = jobId
-
-                            -- 3. Simula o "Enter" para que o jogo processe o novo valor.
-                            if getconnections then
-                                for _, conn in ipairs(getconnections(descendant.FocusLost)) do
-                                    conn:Fire(true) -- O 'true' simula a submissão com Enter.
-                                end
-                            end
-                            
-                            -- 4. Libera o foco.
-                            descendant:ReleaseFocus()
-                        end)
+                    -- Caminho 2 (Desktop/Outros): Job-ID Input. ... .Input
+                    if descendant.Name == "Input" and path:find("Job%-ID ?Input") then
+                         pcall(function() descendant.Text = jobId end)
                         return true
                     end
                 end
